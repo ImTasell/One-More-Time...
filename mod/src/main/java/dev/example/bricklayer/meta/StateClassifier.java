@@ -55,7 +55,7 @@ public final class StateClassifier {
       flags |= CellFlags.BE_RENDERER | CellFlags.FORCE_VANILLA;
     }
     if (state.is(Blocks.TRIPWIRE)) {
-      // Tripwire changes its model per surrounding state far more often than the static check can
+      // Tripwire changes its model per surrounding state far more often than a static check can
       // prove; vanilla's own renderer handles it.
       flags |= CellFlags.FORCE_VANILLA;
     }

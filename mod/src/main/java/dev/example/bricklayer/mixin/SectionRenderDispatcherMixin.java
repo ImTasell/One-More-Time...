@@ -6,45 +6,35 @@ package dev.example.bricklayer.mixin;
 
 import dev.example.bricklayer.Bricklayer;
 import dev.example.bricklayer.compat.CompatGate;
-import net.minecraft.client.renderer.SectionRenderDispatcher;
+import dev.example.bricklayer.upload.SectionUploader;
+import net.minecraft.client.renderer.chunk.SectionRenderDispatcher;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 /**
- * Owns the per-frame slot that used to compile sections on the main thread.
+ * Owns the per-frame upload slot.
  *
- * <p>Section rebuilds are handed to {@code BricklayerScheduler} from {@code RenderSectionMixin};
- * this mixin spends the same per-frame slot uploading finished meshes, which is the only place a
- * {@code VertexBuffer} may be touched.
- *
- * <p>Assumption: 1.21.1 exposes {@code SectionRenderDispatcher#runTask()}. If it moved, the hook
- * name here is the only change; {@code injectors.defaultRequire = 1} makes a moved hook fail loudly
- * at load rather than silently doing nothing.
- *
- * <p>Drawing, frustum culling, translucent resorting and the occlusion graph stay vanilla: only the
- * compile step and its scheduling are replaced.
+ * <p>Section compilation is diverted from {@code RenderSectionMixin}; what is left for the
+ * dispatcher is flushing results. {@code uploadAllPendingUploads} runs on the render thread every
+ * frame, which is exactly where a {@code VertexBuffer} may be touched, so the governor drains there
+ * under its millisecond budget. Vanilla then uploads its own pending work as usual.
  */
 @Mixin(SectionRenderDispatcher.class)
 public abstract class SectionRenderDispatcherMixin {
-
-  @Inject(method = "runTask", at = @At("HEAD"), cancellable = true)
-  private void bricklayer$runTask(CallbackInfo ci) {
+  @Inject(method = "uploadAllPendingUploads", at = @At("HEAD"))
+  private void bricklayer$drainUploads(CallbackInfo ci) {
     if (!CompatGate.active()) {
       return;
     }
-    // Vanilla's per-frame task pump would compile sections on the main thread; the workers own that
-    // work now. This hook uses the same per-frame slot to upload finished meshes within the frame's
-    // millisecond budget, which is the only place uploads are allowed to happen.
     Bricklayer.get()
         .uploadGovernor()
         .drain(
-            compiled -> {
-              if (!dev.example.bricklayer.upload.SectionUploader.upload(compiled)) {
-                compiled.close();
+            mesh -> {
+              if (!SectionUploader.upload(mesh)) {
+                mesh.close();
               }
             });
-    ci.cancel();
   }
 }

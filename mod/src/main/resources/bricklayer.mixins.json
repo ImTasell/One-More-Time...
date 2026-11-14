@@ -10,8 +10,7 @@
   "client": [
     "LevelChunkMixin",
     "LevelRendererMixin",
-    "SectionRenderDispatcherMixin",
     "RenderSectionMixin",
-    "RebuildTaskMixin"
+    "SectionRenderDispatcherMixin"
   ]
 }

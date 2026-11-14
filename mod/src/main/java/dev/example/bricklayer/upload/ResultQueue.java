@@ -7,16 +7,16 @@ package dev.example.bricklayer.upload;
 import java.util.Queue;
 import java.util.concurrent.ConcurrentLinkedQueue;
 
-/** Lock-free handoff of compiled sections from mesh workers to the render thread. */
+/** Lock-free handoff of compiled meshes from mesh workers to the render thread. */
 public final class ResultQueue {
-  private final Queue<CompiledSection> queue = new ConcurrentLinkedQueue<>();
+  private final Queue<CompiledMesh> queue = new ConcurrentLinkedQueue<>();
   private volatile long dropped;
 
-  public void add(CompiledSection section) {
-    queue.add(section);
+  public void add(CompiledMesh mesh) {
+    queue.add(mesh);
   }
 
-  public CompiledSection poll() {
+  public CompiledMesh poll() {
     return queue.poll();
   }
 
@@ -28,16 +28,16 @@ public final class ResultQueue {
     return dropped;
   }
 
-  public void recordDrop(CompiledSection section) {
-    section.close();
+  public void recordDrop(CompiledMesh mesh) {
+    mesh.close();
     dropped++;
   }
 
   /** Discards everything queued, e.g. on a world change. */
   public void clear() {
-    CompiledSection section;
-    while ((section = queue.poll()) != null) {
-      section.close();
+    CompiledMesh mesh;
+    while ((mesh = queue.poll()) != null) {
+      mesh.close();
     }
   }
 }

@@ -9,6 +9,7 @@ import com.mojang.brigadier.context.CommandContext;
 import dev.example.bricklayer.Bricklayer;
 import dev.example.bricklayer.compat.CompatGate;
 import dev.example.bricklayer.config.BricklayerConfig;
+import dev.example.bricklayer.core.grid.Dir;
 import dev.example.bricklayer.core.grid.SectionGrid;
 import dev.example.bricklayer.core.grid.SectionSnapshot;
 import dev.example.bricklayer.core.meta.CellFlags;
@@ -28,7 +29,7 @@ import net.minecraft.core.SectionPos;
 import net.minecraft.network.chat.Component;
 import net.neoforged.neoforge.client.event.RegisterClientCommandsEvent;
 
-/** {@code /bricklayer stats|toggle|parity|dump}. */
+/** {@code /bricklayer stats|toggle|parity|reload|dump}. */
 public final class BricklayerCommand {
   private BricklayerCommand() {}
 
@@ -75,17 +76,18 @@ public final class BricklayerCommand {
         context,
         Component.literal(
             String.format(
-                "meanCompile=%.3fms deferred=%.1f%% uploads=%d tables=%d states/%d models",
+                "meanCompile=%.3fms deferred=%.1f%% uploads=%d states=%d models=%d quads=%d",
                 scheduler.meanCompileMs(),
                 scheduler.deferredRatio() * 100.0,
                 governor.uploadsTotal(),
                 Bricklayer.metaTable().size(),
-                Bricklayer.quadStore().modelCount())),
+                Bricklayer.quadStore().modelCount(),
+                Bricklayer.quadStore().quadCount())),
         ChatFormatting.GRAY);
     feedback(
         context,
         Component.literal(
-            "visibilityCache="
+            "visCache="
                 + Bricklayer.faceVisibility().size()
                 + " decodeCache="
                 + Bricklayer.get().decodeCache().size()
@@ -132,7 +134,7 @@ public final class BricklayerCommand {
   private static int dump(CommandContext<CommandSourceStack> context, BlockPos target) {
     Minecraft minecraft = Minecraft.getInstance();
     ClientLevel level = minecraft.level;
-    if (level == null) {
+    if (level == null || minecraft.player == null) {
       return 0;
     }
     BlockPos pos = target != null ? target : minecraft.player.blockPosition();
@@ -142,6 +144,10 @@ public final class BricklayerCommand {
     new Snapshotter(Bricklayer.get().decodeCache())
         .capture(level, sectionPos, sectionPos.asLong(), 0, snapshot);
 
+    int cell = SectionGrid.cellIndex(pos.getX() & 15, pos.getY() & 15, pos.getZ() & 15);
+    int grid = SectionGrid.gridOf(cell);
+    int state = snapshot.state[grid];
+
     StringBuilder out = new StringBuilder();
     out.append("bricklayer dump ").append(sectionPos).append('\n');
     out.append("generation=").append(Bricklayer.resourceGeneration()).append('\n');
@@ -150,20 +156,26 @@ public final class BricklayerCommand {
         .append(" blockEntities=")
         .append(snapshot.beCount)
         .append('\n');
-    int localX =
-        SectionGrid.cellX(SectionGrid.cellIndex(pos.getX() & 15, pos.getY() & 15, pos.getZ() & 15));
-    int cell = SectionGrid.cellIndex(pos.getX() & 15, pos.getY() & 15, pos.getZ() & 15);
-    int grid = SectionGrid.gridOf(cell);
-    int state = snapshot.state[grid];
-    out.append("cell ").append(localX).append('/').append(cell).append(" state=").append(state);
+    out.append("pos=").append(pos).append(" cell=").append(cell).append('\n');
+    out.append("state=").append(state);
     var blockState = VanillaStates.byId(state);
-    out.append(" block=").append(blockState == null ? "?" : blockState.getBlock()).append('\n');
+    out.append(" block=")
+        .append(blockState == null ? "?" : String.valueOf(blockState.getBlock()))
+        .append('\n');
     out.append("flags=0x")
         .append(Integer.toHexString(Bricklayer.metaTable().flags(state)))
         .append('\n');
-    for (int dir = 0; dir < 6; dir++) {
-      int neighbourState =
-          snapshot.state[grid + dev.example.bricklayer.core.grid.Dir.VALUES[dir].offset()];
+    out.append("model=").append(Bricklayer.metaTable().model(state)).append('\n');
+    out.append("layer=")
+        .append(CellFlags.layerOf(Bricklayer.metaTable().flags(state)))
+        .append('\n');
+    out.append("deferred=")
+        .append(
+            (Bricklayer.metaTable().flags(state) & (CellFlags.FORCE_VANILLA | CellFlags.FLUID))
+                != 0)
+        .append('\n');
+    for (Dir dir : Dir.VALUES) {
+      int neighbourState = snapshot.state[grid + dir.offset()];
       out.append("  face ")
           .append(dir)
           .append(" neighbour=")
@@ -171,15 +183,9 @@ public final class BricklayerCommand {
           .append(" visible=")
           .append(
               Bricklayer.faceVisibility()
-                  .visible(state, neighbourState, dir, Bricklayer.get().visibilityOracle()))
+                  .visible(state, neighbourState, dir.id(), Bricklayer.get().visibilityOracle()))
           .append('\n');
     }
-    out.append("model=").append(Bricklayer.metaTable().model(state)).append('\n');
-    out.append("deferred=")
-        .append(
-            (Bricklayer.metaTable().flags(state) & (CellFlags.FORCE_VANILLA | CellFlags.FLUID))
-                != 0)
-        .append('\n');
 
     Path file =
         minecraft.gameDirectory.toPath().resolve("bricklayer-dump-" + sectionPos.asLong() + ".txt");

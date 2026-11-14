@@ -21,13 +21,22 @@ public final class TaskQueue {
     public final int version;
     public final long submittedNanos;
     public final SectionSnapshot snapshot;
+
+    /**
+     * Opaque handle the glue layer attaches to a task, e.g. the render section it came from. The
+     * core never reads it; it exists so the glue can avoid a global lookup on the upload path.
+     */
+    public final Object attachment;
+
     private double score;
 
-    public Task(long sectionKey, int version, SectionSnapshot snapshot, double score) {
+    public Task(
+        long sectionKey, int version, SectionSnapshot snapshot, double score, Object attachment) {
       this.sectionKey = sectionKey;
       this.version = version;
       this.snapshot = snapshot;
       this.score = score;
+      this.attachment = attachment;
       this.submittedNanos = System.nanoTime();
     }
 

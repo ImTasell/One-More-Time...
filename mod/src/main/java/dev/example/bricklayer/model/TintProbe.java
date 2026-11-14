@@ -4,9 +4,10 @@
  */
 package dev.example.bricklayer.model;
 
-import net.minecraft.client.multiplayer.ClientLevel;
+import javax.annotation.Nullable;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.world.level.BlockAndTintGetter;
 import net.minecraft.world.level.ColorResolver;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.entity.BlockEntity;
@@ -15,10 +16,10 @@ import net.minecraft.world.level.lighting.LevelLightEngine;
 import net.minecraft.world.level.material.FluidState;
 
 /**
- * A {@code BlockAndTintGetter} with nothing in it, used only to ask a block colour provider for a
- * colour at a given height and see whether the answer changes with Y.
+ * An empty {@code BlockAndTintGetter}, used only to ask a block colour provider for a colour at a
+ * given height and see whether the answer changes with Y.
  */
-final class TintProbe implements net.minecraft.world.level.BlockAndTintGetter {
+final class TintProbe implements BlockAndTintGetter {
   static final TintProbe INSTANCE = new TintProbe();
 
   private TintProbe() {}
@@ -33,6 +34,7 @@ final class TintProbe implements net.minecraft.world.level.BlockAndTintGetter {
     return getBlockState(pos).getFluidState();
   }
 
+  @Nullable
   @Override
   public BlockEntity getBlockEntity(BlockPos pos) {
     return null;
@@ -60,16 +62,6 @@ final class TintProbe implements net.minecraft.world.level.BlockAndTintGetter {
 
   @Override
   public int getBlockTint(BlockPos pos, ColorResolver resolver) {
-    return resolver.getColor(null, pos.getX(), pos.getZ());
-  }
-
-  @Override
-  public int getLightEmission(BlockPos pos) {
     return 0;
-  }
-
-  /** Unused but part of the interface. */
-  static ClientLevel levelOrNull() {
-    return null;
   }
 }

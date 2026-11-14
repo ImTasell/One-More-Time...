@@ -7,8 +7,6 @@ package dev.example.bricklayer.upload;
 import dev.example.bricklayer.config.BricklayerConfig;
 import dev.example.bricklayer.core.sched.UploadBudget;
 import java.util.function.Consumer;
-import javax.annotation.Nullable;
-import net.minecraft.client.Minecraft;
 
 /**
  * Drains finished meshes on the render thread, within a millisecond budget.
@@ -25,8 +23,8 @@ public final class UploadGovernor {
   private long uploadsTotal;
   private double lastFrameMs;
 
-  public void submit(CompiledSection section) {
-    results.add(section);
+  public void submit(CompiledMesh mesh) {
+    results.add(mesh);
   }
 
   public int queued() {
@@ -37,23 +35,19 @@ public final class UploadGovernor {
     return uploadsTotal;
   }
 
-  public void beginFrame() {
+  /** Drops a finished mesh that lost its race with a newer edit. */
+  public void discard(CompiledMesh mesh) {
+    results.recordDrop(mesh);
+  }
+
+  /** Drains up to the budget, handing each accepted mesh to {@code uploader}. */
+  public void drain(Consumer<CompiledMesh> uploader) {
     lastFrameStartNanos = System.nanoTime();
     uploadsThisFrame = 0;
-  }
-
-  /** Drops a finished section that lost its race with a newer edit. */
-  public void discard(CompiledSection section) {
-    results.recordDrop(section);
-  }
-
-  /** Drains up to the budget, handing each accepted section to {@code uploader}. */
-  public void drain(Consumer<CompiledSection> uploader) {
-    beginFrame();
-    CompiledSection section;
+    CompiledMesh mesh;
     while (budget.mayUpload(lastFrameStartNanos, uploadsThisFrame)
-        && (section = results.poll()) != null) {
-      uploader.accept(section);
+        && (mesh = results.poll()) != null) {
+      uploader.accept(mesh);
       uploadsThisFrame++;
       uploadsTotal++;
     }
@@ -72,20 +66,14 @@ public final class UploadGovernor {
     return lastFrameMs;
   }
 
+  public int queuedDropped() {
+    return (int) results.droppedCount();
+  }
+
   public void reset() {
     results.clear();
     budget = new UploadBudget(BricklayerConfig.get().uploadBudgetMs());
     uploadsThisFrame = 0;
     lastFrameStartNanos = 0;
-  }
-
-  @Nullable
-  public ResultQueue results() {
-    return results;
-  }
-
-  /** True when the render thread currently owns the frame; used by the debug overlay. */
-  public boolean onRenderThread() {
-    return Minecraft.getInstance().isSameThread();
   }
 }

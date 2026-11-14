@@ -5,7 +5,9 @@
 package dev.example.bricklayer.debug;
 
 import com.mojang.blaze3d.vertex.BufferBuilder;
+import com.mojang.blaze3d.vertex.ByteBufferBuilder;
 import com.mojang.blaze3d.vertex.DefaultVertexFormat;
+import com.mojang.blaze3d.vertex.MeshData;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.blaze3d.vertex.VertexFormat;
 import dev.example.bricklayer.Bricklayer;
@@ -40,7 +42,7 @@ import net.minecraft.world.level.block.state.BlockState;
  * per-layer vertex counts and hashes the fast path's vertex stream.
  *
  * <p>Limitation: the vanilla pass is counted, not hashed, because vanilla's vertex buffer is opaque
- * once built. Count mismatch catches almost every AO or culling regression, and the hash catches
+ * once built. A count mismatch catches almost every AO or culling regression, and the hash catches
  * ordering changes in the fast path between two runs.
  */
 public final class ParityTool {
@@ -50,8 +52,7 @@ public final class ParityTool {
     List<Component> lines = new ArrayList<>();
 
     SectionSnapshot snapshot = new SectionSnapshot();
-    Snapshotter snapshotter = new Snapshotter(Bricklayer.get().decodeCache());
-    snapshotter.capture(level, pos, pos.asLong(), 0, snapshot);
+    new Snapshotter(Bricklayer.get().decodeCache()).capture(level, pos, pos.asLong(), 0, snapshot);
 
     // Fast path.
     HashSink fast = new HashSink();
@@ -75,11 +76,13 @@ public final class ParityTool {
     int vanillaVertices = vanillaVertexCount(level, pos, snapshot);
 
     lines.add(
-        Component.translatable(
-            "bricklayer.command.parity.fast",
-            result.layerVertexCounts[0],
-            fast.hash(),
-            fast.quads));
+        Component.literal(
+            "fast: "
+                + result.layerVertexCounts[0]
+                + " solid vertices, "
+                + fast.quads
+                + " quads, hash 0x"
+                + Long.toHexString(fast.hash())));
     if (fast.vertices == vanillaVertices) {
       lines.add(
           Component.translatable("bricklayer.command.parity.ok", result.quadCount, fast.vertices));
@@ -93,45 +96,44 @@ public final class ParityTool {
 
   private static int vanillaVertexCount(
       ClientLevel level, SectionPos pos, SectionSnapshot snapshot) {
-    SectionBufferBuilderPack pack = new SectionBufferBuilderPack();
-    BufferBuilder buffer = pack.buffer(RenderType.solid());
-    buffer.begin(VertexFormat.Mode.QUADS, DefaultVertexFormat.BLOCK);
-    SnapshotBlockGetter getter = new SnapshotBlockGetter(level, pos, snapshot);
-    BlockRenderDispatcher dispatcher = Minecraft.getInstance().getBlockRenderer();
-    PoseStack poseStack = new PoseStack();
-    RandomSource random = RandomSource.create();
-    BlockPos.MutableBlockPos cursor = new BlockPos.MutableBlockPos();
-    int expected = 0;
+    try (SectionBufferBuilderPack pack = new SectionBufferBuilderPack()) {
+      ByteBufferBuilder bytes = pack.buffer(RenderType.solid());
+      BufferBuilder buffer =
+          new BufferBuilder(bytes, VertexFormat.Mode.QUADS, DefaultVertexFormat.BLOCK);
+      SnapshotBlockGetter getter = new SnapshotBlockGetter(level, pos, snapshot);
+      BlockRenderDispatcher dispatcher = Minecraft.getInstance().getBlockRenderer();
+      PoseStack poseStack = new PoseStack();
+      RandomSource random = RandomSource.create();
+      BlockPos.MutableBlockPos cursor = new BlockPos.MutableBlockPos();
 
-    for (int y = 0; y < 16; y++) {
-      for (int z = 0; z < 16; z++) {
-        for (int x = 0; x < 16; x++) {
-          BlockState state = VanillaStates.byId(snapshot.state[SectionGrid.idx(x, y, z)]);
-          if (state == null || state.isAir()) {
-            continue;
-          }
-          cursor.set(pos.minBlockX() + x, pos.minBlockY() + y, pos.minBlockZ() + z);
-          if (ItemBlockRenderTypes.getChunkRenderType(state) != RenderType.solid()) {
-            continue;
-          }
-          if (!state.getFluidState().isEmpty()) {
-            dispatcher.renderLiquid(cursor, getter, buffer, state, state.getFluidState());
-            expected += 4;
-          } else {
-            dispatcher.renderBatched(state, cursor, getter, poseStack, buffer, true, random);
-            // renderBatched has no vertex count return; the draw state is the authoritative number.
-            expected += 0;
+      for (int y = 0; y < 16; y++) {
+        for (int z = 0; z < 16; z++) {
+          for (int x = 0; x < 16; x++) {
+            BlockState state = VanillaStates.byId(snapshot.state[SectionGrid.idx(x, y, z)]);
+            if (state == null || state.isAir()) {
+              continue;
+            }
+            cursor.set(pos.minBlockX() + x, pos.minBlockY() + y, pos.minBlockZ() + z);
+            if (ItemBlockRenderTypes.getChunkRenderType(state) != RenderType.solid()) {
+              continue;
+            }
+            if (!state.getFluidState().isEmpty()) {
+              dispatcher.renderLiquid(cursor, getter, buffer, state, state.getFluidState());
+            } else {
+              dispatcher.renderBatched(state, cursor, getter, poseStack, buffer, true, random);
+            }
           }
         }
       }
+
+      MeshData data = buffer.build();
+      if (data == null) {
+        return 0;
+      }
+      int vertices = data.drawState().vertexCount();
+      data.close();
+      return vertices;
     }
-    var data = buffer.build();
-    if (data == null) {
-      return expected;
-    }
-    int vertices = data.drawState().vertexCount();
-    data.close();
-    return vertices;
   }
 
   /** FNV-1a over every emitted vertex attribute, plus a quad count. */

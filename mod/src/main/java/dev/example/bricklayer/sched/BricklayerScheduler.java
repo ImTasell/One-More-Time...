@@ -16,23 +16,24 @@ import dev.example.bricklayer.debug.CompileEvent;
 import dev.example.bricklayer.pipeline.MeshPipeline;
 import dev.example.bricklayer.snapshot.DecodeCache;
 import dev.example.bricklayer.snapshot.Snapshotter;
-import dev.example.bricklayer.upload.CompiledSection;
-import dev.example.bricklayer.upload.UploadGovernor;
+import dev.example.bricklayer.upload.CompiledMesh;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import javax.annotation.Nullable;
+import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.renderer.SectionBufferBuilderPack;
+import net.minecraft.client.renderer.chunk.SectionRenderDispatcher;
 import net.minecraft.core.SectionPos;
 
 /**
  * The scheduler that replaces vanilla's section dispatch queue.
  *
  * <p>Snapshots are taken on the main thread inside the dirty hook, tasks go into a bounded priority
- * queue, and a small pool of daemon workers drains it. Finished sections land in the upload
+ * queue, and a small pool of daemon workers drains it. Finished meshes land in the upload
  * governor's queue and are uploaded on the render thread.
  *
  * <p>Player-initiated edits keep vanilla's synchronous semantics: {@link #submitImmediate} runs the
@@ -40,6 +41,7 @@ import net.minecraft.core.SectionPos;
  */
 public final class BricklayerScheduler {
   private static final int QUEUE_CAPACITY = 4096;
+  private static final AtomicInteger THREAD_INDEX = new AtomicInteger();
 
   private final TaskQueue queue = new TaskQueue(QUEUE_CAPACITY);
   private final DirtyVersions versions = new DirtyVersions();
@@ -61,15 +63,13 @@ public final class BricklayerScheduler {
     ThreadFactory factory =
         runnable -> {
           Thread thread =
-              new Thread(runnable, "Bricklayer-Mesher-" + threadIndex.incrementAndGet());
+              new Thread(runnable, "Bricklayer-Mesher-" + THREAD_INDEX.incrementAndGet());
           thread.setDaemon(true);
           thread.setPriority(Thread.NORM_PRIORITY - 1);
           return thread;
         };
     this.executor = Executors.newFixedThreadPool(config.workerThreads(), factory);
   }
-
-  private static final AtomicInteger threadIndex = new AtomicInteger();
 
   public DirtyVersions versions() {
     return versions;
@@ -102,7 +102,7 @@ public final class BricklayerScheduler {
    *
    * @return true when a task was queued; false when the queue refused it
    */
-  public boolean submit(ClientLevel level, SectionPos pos, double score) {
+  public boolean submit(ClientLevel level, SectionPos pos, double score, @Nullable Object owner) {
     if (!CompatGate.active() || inFlight.get() >= BricklayerConfig.get().maxInFlight()) {
       return false;
     }
@@ -110,7 +110,7 @@ public final class BricklayerScheduler {
     int version = versions.bump(key);
     SectionSnapshot snapshot = pool.acquire();
     snapshotter.capture(level, pos, key, version, snapshot);
-    TaskQueue.Task task = new TaskQueue.Task(key, version, snapshot, score);
+    TaskQueue.Task task = new TaskQueue.Task(key, version, snapshot, score, owner);
     if (!queue.offer(task)) {
       pool.release(snapshot);
       return false;
@@ -124,8 +124,8 @@ public final class BricklayerScheduler {
    * behaviour for player edits.
    */
   @Nullable
-  public CompiledSection submitImmediate(
-      ClientLevel level, SectionPos pos, SectionBufferBuilderPack buffers) {
+  public CompiledMesh submitImmediate(
+      ClientLevel level, SectionPos pos, SectionBufferBuilderPack buffers, @Nullable Object owner) {
     if (!CompatGate.active()) {
       return null;
     }
@@ -134,10 +134,21 @@ public final class BricklayerScheduler {
     SectionSnapshot snapshot = pool.acquire();
     try {
       snapshotter.capture(level, pos, key, version, snapshot);
-      return pipeline.mesh(level, pos, snapshot, buffers, Bricklayer.resourceGeneration());
+      return pipeline.mesh(level, pos, snapshot, buffers, Bricklayer.resourceGeneration(), owner);
     } finally {
       pool.release(snapshot);
     }
+  }
+
+  /**
+   * Captures a snapshot for a section vanilla is about to rebuild itself, stamping the dirty
+   * version. Called from the rebuild path, i.e. on the main thread.
+   */
+  public SectionSnapshot capture(ClientLevel level, SectionPos pos) {
+    long key = pos.asLong();
+    SectionSnapshot snapshot = pool.acquire();
+    snapshotter.capture(level, pos, key, versions.bump(key), snapshot);
+    return snapshot;
   }
 
   private void pump() {
@@ -168,7 +179,7 @@ public final class BricklayerScheduler {
 
   private void process(TaskQueue.Task task) {
     SectionSnapshot snapshot = task.snapshot;
-    ClientLevel level = net.minecraft.client.Minecraft.getInstance().level;
+    ClientLevel level = Minecraft.getInstance().level;
     SectionPos pos = SectionPos.of(task.sectionKey);
     if (level == null || !versions.matches(task.sectionKey, task.version)) {
       pool.release(snapshot);
@@ -176,23 +187,28 @@ public final class BricklayerScheduler {
     }
 
     long start = System.nanoTime();
-    SectionBufferBuilderPack buffers = new SectionBufferBuilderPack();
-    CompiledSection compiled = null;
+    CompiledMesh mesh = null;
     try {
-      compiled = pipeline.mesh(level, pos, snapshot, buffers, Bricklayer.resourceGeneration());
-      if (compiled != null) {
-        Bricklayer.get().uploadGovernor().submit(compiled);
+      // Vanilla hands each task its own buffer pack from a pool; a fresh pack per task matches that
+      // lifetime and keeps the worker free of shared mutable state.
+      SectionBufferBuilderPack buffers = new SectionBufferBuilderPack();
+      mesh =
+          pipeline.mesh(
+              level, pos, snapshot, buffers, Bricklayer.resourceGeneration(), task.attachment);
+      buffers.close();
+      if (mesh != null) {
+        Bricklayer.get().uploadGovernor().submit(mesh);
         totalTasks++;
         totalNanos += System.nanoTime() - start;
-        deferredCells += compiled.deferredCellCount;
+        deferredCells += mesh.deferredCellCount;
         CompileEvent.record(
-            task.sectionKey, compiled.compileNanos, compiled.quadCount, compiled.deferredCellCount);
+            task.sectionKey, mesh.compileNanos, mesh.quadCount, mesh.deferredCellCount);
       }
     } catch (RuntimeException | LinkageError failure) {
-      // Never let a bad section take the game down: mark it vanilla-only and reset the builders.
+      // Never let a bad section take the game down: mark it vanilla-only and move on.
       CompatGate.recordFailure("compile " + task.sectionKey, failure);
-      if (compiled != null) {
-        compiled.close();
+      if (mesh != null) {
+        mesh.close();
       }
     } finally {
       pool.release(snapshot);
@@ -214,15 +230,11 @@ public final class BricklayerScheduler {
     return PriorityFn.score(dx * dx + dy * dy + dz * dz, inFrustum, behind, ageTicks);
   }
 
-  /**
-   * Captures a snapshot for a section vanilla is about to rebuild itself, stamping the dirty
-   * version. Called from the rebuild task's constructor, i.e. on the main thread.
-   */
-  public SectionSnapshot capture(ClientLevel level, SectionPos pos) {
-    long key = pos.asLong();
-    SectionSnapshot snapshot = pool.acquire();
-    snapshotter.capture(level, pos, key, versions.bump(key), snapshot);
-    return snapshot;
+  /** Priority score for a render section, using vanilla's own distance. */
+  public static double score(SectionRenderDispatcher.RenderSection section) {
+    var camera = Minecraft.getInstance().gameRenderer.getMainCamera().getPosition();
+    var origin = section.getOrigin();
+    return score(SectionPos.of(origin), camera.x, camera.y, camera.z, true, false, 0L);
   }
 
   /** Drops every queued task and returns its snapshot to the pool. */
@@ -238,18 +250,5 @@ public final class BricklayerScheduler {
   public void shutdown() {
     reset();
     executor.shutdownNow();
-  }
-
-  /** Test hook: drains everything synchronously on the calling thread. */
-  void drainNow() {
-    TaskQueue.Task task;
-    while ((task = queue.poll()) != null) {
-      process(task);
-    }
-  }
-
-  @Nullable
-  public UploadGovernor governor() {
-    return Bricklayer.get().uploadGovernor();
   }
 }

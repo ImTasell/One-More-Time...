@@ -10,16 +10,20 @@ import dev.example.bricklayer.core.quad.QuadStore;
 import dev.example.bricklayer.meta.BlockStateAccess;
 import dev.example.bricklayer.meta.StateClassifier;
 import dev.example.bricklayer.meta.VanillaStates;
+import java.util.ArrayList;
 import java.util.List;
+import net.minecraft.client.color.block.BlockColors;
 import net.minecraft.client.renderer.ItemBlockRenderTypes;
 import net.minecraft.client.renderer.RenderType;
 import net.minecraft.client.renderer.block.BlockModelShaper;
+import net.minecraft.client.renderer.block.model.BakedQuad;
 import net.minecraft.client.resources.model.BakedModel;
 import net.minecraft.client.resources.model.ModelManager;
 import net.minecraft.client.resources.model.WeightedBakedModel;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.util.RandomSource;
+import net.minecraft.util.random.WeightedEntry;
 import net.minecraft.world.level.EmptyBlockGetter;
 import net.minecraft.world.level.block.state.BlockState;
 
@@ -38,8 +42,7 @@ public final class BricklayerModels {
   /** Freshly built tables, published together so no reader sees a partial pair. */
   public record Result(MetaTable meta, QuadStore quads) {}
 
-  public static Result rebuild(
-      ModelManager models, net.minecraft.client.color.block.BlockColors blockColors) {
+  public static Result rebuild(ModelManager models, BlockColors blockColors) {
     int stateCount = VanillaStates.count();
     int[] flags = new int[stateCount];
     float[] shade = new float[stateCount];
@@ -107,11 +110,11 @@ public final class BricklayerModels {
     List<BakedModel> variants;
     int[] weights;
     if (model instanceof WeightedBakedModel weighted) {
-      List<WeightedBakedModel.WeightedModel> entries = WeightedModelAccess.entries(weighted);
+      List<WeightedEntry.Wrapper<BakedModel>> entries = WeightedModelAccess.entries(weighted);
       if (entries.isEmpty()) {
         return -1;
       }
-      variants = new java.util.ArrayList<>(entries.size());
+      variants = new ArrayList<>(entries.size());
       weights = new int[entries.size()];
       for (int i = 0; i < entries.size(); i++) {
         variants.add(WeightedModelAccess.model(entries.get(i)));
@@ -148,14 +151,12 @@ public final class BricklayerModels {
       boolean[] hasTint) {
     for (int face = 0; face <= 6; face++) {
       Direction direction = face < 6 ? Direction.values()[face] : null;
-      List<net.minecraft.client.renderer.block.model.BakedQuad> quads =
-          model.getQuads(state, direction, random);
-      for (net.minecraft.client.renderer.block.model.BakedQuad quad : quads) {
+      List<BakedQuad> quads = model.getQuads(state, direction, random);
+      for (BakedQuad quad : quads) {
         if (quad.getTintIndex() >= 0) {
           hasTint[0] = true;
         }
-        // Assumption: BakedQuad#getDirection doubles as the cull face, as it does throughout
-        // vanilla's model pipeline.
+        // BakedQuad#getDirection doubles as the cull face throughout vanilla's model pipeline.
         int quadFace = quad.getDirection().ordinal();
         builder.addQuad(
             modelIndex,
@@ -163,7 +164,7 @@ public final class BricklayerModels {
             quadFace,
             layer,
             quad.getTintIndex(),
-            quad.isShaded(),
+            quad.isShade(),
             quad.getVertices(),
             0);
       }
@@ -184,15 +185,15 @@ public final class BricklayerModels {
    * True when the block's colour provider depends on the world position's height. Vanilla providers
    * never do, but a modded one might, and the mesher memoises tints per column.
    */
-  private static boolean tintVariesWithHeight(
-      net.minecraft.client.color.block.BlockColors blockColors, BlockState state) {
+  private static boolean tintVariesWithHeight(BlockColors blockColors, BlockState state) {
     try {
       int low = blockColors.getColor(state, TintProbe.INSTANCE, new BlockPos(0, 0, 0), 0);
       int high = blockColors.getColor(state, TintProbe.INSTANCE, new BlockPos(0, 255, 0), 0);
       return low != high;
     } catch (RuntimeException ignored) {
-      // A provider that insists on a live level: treat the tint as positional, which is the safe
-      // choice because it bypasses the memo.
+      // A provider that insists on a live level: treat the tint as positional, which is safe
+      // because
+      // it bypasses the memo.
       return true;
     }
   }

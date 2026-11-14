@@ -5,7 +5,6 @@
 package dev.example.bricklayer.meta;
 
 import dev.example.bricklayer.core.meta.FaceVisibilityTable;
-import net.minecraft.client.Minecraft;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.world.level.BlockGetter;
@@ -13,17 +12,14 @@ import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.material.FluidState;
-import net.minecraft.world.phys.shapes.CollisionContext;
-import net.minecraft.world.phys.shapes.VoxelShape;
 
 /**
  * Fills {@link FaceVisibilityTable} misses with vanilla's own answer.
  *
  * <p>Rather than reimplementing "does glass cull against glass" or NeoForge's face-hiding
  * extension, this evaluates {@code Block#shouldRenderFace} through a two-cell {@link BlockGetter}
- * stub: the state in question at the origin and the neighbour one step along the face. The client's
- * own block-state registry supplies the states, so leaves, glass, same-block culling and modded
- * overrides behave exactly as in vanilla.
+ * stub: the state in question at the origin and the neighbour one step along the face. Leaves,
+ * glass, same-block culling and modded overrides therefore behave exactly as in vanilla.
  */
 public final class FaceVisibilityOracle implements FaceVisibilityTable.Oracle {
   private final TwoCellLevel level = new TwoCellLevel();
@@ -42,8 +38,8 @@ public final class FaceVisibilityOracle implements FaceVisibilityTable.Oracle {
   }
 
   /**
-   * Small BlockGetter that can only answer about two cells. Every other query is answered
-   * conservatively, which is enough for {@code shouldRenderFace}.
+   * A BlockGetter that only knows two cells. Every other query is answered conservatively, which is
+   * all {@code shouldRenderFace} needs.
    */
   private static final class TwoCellLevel implements BlockGetter {
     private BlockState origin = Blocks.AIR.defaultBlockState();
@@ -56,10 +52,7 @@ public final class FaceVisibilityOracle implements FaceVisibilityTable.Oracle {
 
     @Override
     public BlockState getBlockState(BlockPos pos) {
-      if (pos.equals(BlockPos.ZERO)) {
-        return origin;
-      }
-      return neighbour;
+      return pos.equals(BlockPos.ZERO) ? origin : neighbour;
     }
 
     @Override
@@ -80,28 +73,6 @@ public final class FaceVisibilityOracle implements FaceVisibilityTable.Oracle {
     @Override
     public int getMinBuildHeight() {
       return -64;
-    }
-
-    @Override
-    public float getShade(Direction direction, boolean shade) {
-      return Minecraft.getInstance().level == null
-          ? 1.0f
-          : Minecraft.getInstance().level.getShade(direction, shade);
-    }
-
-    @Override
-    public int getLightEmission(BlockPos pos) {
-      return 0;
-    }
-
-    @Override
-    public VoxelShape getBlockSupportShape(BlockPos pos) {
-      return getBlockState(pos).getBlockSupportShape(this, pos);
-    }
-
-    @Override
-    public VoxelShape getCollisionShape(BlockPos pos, CollisionContext context) {
-      return getBlockState(pos).getCollisionShape(this, pos, context);
     }
   }
 }

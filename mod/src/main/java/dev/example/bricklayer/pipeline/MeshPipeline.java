@@ -21,7 +21,10 @@ import dev.example.bricklayer.core.mesh.TintResolver;
 import dev.example.bricklayer.core.quad.QuadSink;
 import dev.example.bricklayer.getter.SnapshotBlockGetter;
 import dev.example.bricklayer.meta.VanillaStates;
-import dev.example.bricklayer.upload.CompiledSection;
+import dev.example.bricklayer.upload.CompiledMesh;
+import dev.example.bricklayer.upload.SectionUploader;
+import java.util.ArrayList;
+import java.util.List;
 import javax.annotation.Nullable;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.color.block.BlockColors;
@@ -35,40 +38,37 @@ import net.minecraft.core.SectionPos;
 import net.minecraft.util.RandomSource;
 import net.minecraft.world.level.LightLayer;
 import net.minecraft.world.level.block.RenderShape;
+import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 
 /**
  * Glue between the pure mesher and Minecraft: fills the snapshot's light, runs the pipeline, then
- * replays every deferred cell through vanilla's own block renderer into the same layer builders.
+ * replays every deferred cell through vanilla's own block renderer into the same layer buffers.
  *
  * <p>Because the fast path and the deferred path write into the same builders, a section that is
  * half static terrain and half fluids needs no merge step and no special case.
  *
  * <p>Runs on a worker thread; the only world reads are through {@link SnapshotBlockGetter} plus the
- * light engine's layer listeners, exactly as vanilla's compile task does.
+ * light engine's layer listeners, exactly as vanilla's section compiler does.
  */
 public final class MeshPipeline {
   private final PoseStack poseStack = new PoseStack();
   private final RandomSource random = RandomSource.create();
 
-  /** One builder per layer: 0 solid, 1 cutout-mipped, 2 cutout. */
-  private static final RenderType[] LAYERS = {
-    RenderType.solid(), RenderType.cutoutMipped(), RenderType.cutout()
-  };
-
   /**
    * Meshes one section.
    *
-   * @return the compiled section, or null when the task must be dropped (resource generation
-   *     changed)
+   * @param owner the render section the result belongs to, carried through to the upload stage
+   * @return the compiled mesh, or null when the task must be dropped (resource generation changed)
    */
   @Nullable
-  public CompiledSection mesh(
+  public CompiledMesh mesh(
       ClientLevel level,
       SectionPos pos,
       SectionSnapshot snapshot,
       SectionBufferBuilderPack buffers,
-      int resourceGeneration) {
+      int resourceGeneration,
+      @Nullable Object owner) {
 
     BricklayerConfig.Values config = BricklayerConfig.get();
     SnapshotBlockGetter getter = new SnapshotBlockGetter(level, pos, snapshot);
@@ -84,15 +84,14 @@ public final class MeshPipeline {
     options.sectionY = pos.y();
     options.sectionZ = pos.z();
 
-    Pass pass = Pass.open(buffers, config.rawSink(), this, level, pos, snapshot, options, getter);
+    Pass pass = Pass.open(buffers, config.rawSink(), level, snapshot, options);
     MeshResult result = pass.result;
 
     if (pass.raw && result.deferredCells.length > 0) {
-      // The raw path cannot host vanilla's deferred renderers, which need a BufferBuilder. Re-run
-      // the
-      // section through the safe path rather than mixing two incompatible writers.
+      // The raw path cannot host vanilla's deferred renderers, which need a VertexConsumer. Re-run
+      // the section through the safe path rather than mixing two incompatible writers.
       pass.discard();
-      pass = Pass.open(buffers, false, this, level, pos, snapshot, options, getter);
+      pass = Pass.open(buffers, false, level, snapshot, options);
       result = pass.result;
     }
 
@@ -101,20 +100,30 @@ public final class MeshPipeline {
       return null;
     }
 
-    renderDeferred(pos, snapshot, getter, pass.builders, result);
-
+    renderDeferred(snapshot, getter, pass.builders, result);
     MeshData[] meshData = pass.finish();
-    return CompiledSection.of(
+
+    List<RenderType> nonEmpty = new ArrayList<>(3);
+    for (int layer = 0; layer < SectionUploader.LAYERS.length; layer++) {
+      MeshData data = meshData[layer];
+      if (data != null && data.drawState().vertexCount() > 0) {
+        nonEmpty.add(SectionUploader.LAYERS[layer]);
+      }
+    }
+
+    return CompiledMesh.of(
         snapshot.sectionKey,
         snapshot.version,
         resourceGeneration,
         result.layerVertexCounts,
         result.visibilityPairs,
-        result.bePositions,
+        nonEmpty,
+        collectBlockEntities(level, pos, snapshot),
         meshData,
         result.quadCount,
         result.deferredCells.length,
-        result.nanos);
+        result.nanos,
+        owner);
   }
 
   /** One meshing attempt plus the builders or raw buffers it wrote into. */
@@ -122,25 +131,28 @@ public final class MeshPipeline {
     final boolean raw;
     final BufferBuilder[] builders;
     final ByteBufferBuilder[] rawBuffers;
+    final int[] rawVertexCounts;
     final MeshResult result;
 
     private Pass(
-        boolean raw, BufferBuilder[] builders, ByteBufferBuilder[] rawBuffers, MeshResult result) {
+        boolean raw,
+        BufferBuilder[] builders,
+        ByteBufferBuilder[] rawBuffers,
+        int[] rawVertexCounts,
+        MeshResult result) {
       this.raw = raw;
       this.builders = builders;
       this.rawBuffers = rawBuffers;
+      this.rawVertexCounts = rawVertexCounts;
       this.result = result;
     }
 
     static Pass open(
         SectionBufferBuilderPack pack,
         boolean raw,
-        MeshPipeline pipeline,
         ClientLevel level,
-        SectionPos pos,
         SectionSnapshot snapshot,
-        SectionMesher.Options options,
-        SnapshotBlockGetter getter) {
+        SectionMesher.Options options) {
 
       BufferBuilder[] builders = new BufferBuilder[3];
       ByteBufferBuilder[] rawBuffers = new ByteBufferBuilder[3];
@@ -151,8 +163,11 @@ public final class MeshPipeline {
           rawBuffers[layer] = new ByteBufferBuilder(64 * 1024);
           sinks[layer] = new RawQuadSink(rawBuffers[layer]);
         } else {
-          builders[layer] = pack.buffer(LAYERS[layer]);
-          builders[layer].begin(VertexFormat.Mode.QUADS, DefaultVertexFormat.BLOCK);
+          builders[layer] =
+              new BufferBuilder(
+                  pack.buffer(SectionUploader.LAYERS[layer]),
+                  VertexFormat.Mode.QUADS,
+                  DefaultVertexFormat.BLOCK);
           sinks[layer] = new BufferQuadSink(builders[layer]);
         }
       }
@@ -169,7 +184,11 @@ public final class MeshPipeline {
               tintResolver(level),
               Bricklayer.get().visibilityOracle());
 
-      return new Pass(raw, builders, rawBuffers, result);
+      int[] counts = new int[3];
+      for (int layer = 0; layer < 3; layer++) {
+        counts[layer] = sinks[layer].vertexCount();
+      }
+      return new Pass(raw, builders, rawBuffers, counts, result);
     }
 
     /** Releases whatever was written when the pass is thrown away. */
@@ -185,8 +204,7 @@ public final class MeshPipeline {
       MeshData[] data = new MeshData[3];
       for (int layer = 0; layer < 3; layer++) {
         if (raw) {
-          // Assumption: ByteBufferBuilder#build returns MeshData (1.20.5+).
-          data[layer] = rawBuffers[layer].build();
+          data[layer] = rawMesh(rawBuffers[layer], rawVertexCounts[layer]);
           rawBuffers[layer].close();
         } else {
           data[layer] = builders[layer].build();
@@ -194,11 +212,23 @@ public final class MeshPipeline {
       }
       return data;
     }
+
+    /**
+     * Wraps a raw vertex buffer in a MeshData; the raw sink always writes quads with short indices.
+     */
+    private static MeshData rawMesh(ByteBufferBuilder buffer, int vertexCount) {
+      MeshData.DrawState state =
+          new MeshData.DrawState(
+              DefaultVertexFormat.BLOCK,
+              vertexCount,
+              0,
+              VertexFormat.Mode.QUADS,
+              VertexFormat.IndexType.SHORT);
+      return new MeshData(buffer.build(), state);
+    }
   }
 
-  /**
-   * Reads light through the light engine, the same cross-thread read vanilla's compile task does.
-   */
+  /** Reads light through the light engine, the same cross-thread read vanilla's compiler does. */
   private static void fillLight(ClientLevel level, SectionPos pos, SectionSnapshot snapshot) {
     var sky = level.getLightEngine().getLayerListener(LightLayer.SKY);
     var block = level.getLightEngine().getLayerListener(LightLayer.BLOCK);
@@ -216,7 +246,6 @@ public final class MeshPipeline {
   }
 
   private void renderDeferred(
-      SectionPos pos,
       SectionSnapshot snapshot,
       SnapshotBlockGetter getter,
       @Nullable BufferBuilder[] builders,
@@ -242,6 +271,29 @@ public final class MeshPipeline {
         dispatcher.renderBatched(state, worldPos, getter, poseStack, builder, true, random);
       }
     }
+  }
+
+  /** Renderable block entities of the section, resolved on the thread doing the meshing. */
+  private static List<BlockEntity> collectBlockEntities(
+      ClientLevel level, SectionPos pos, SectionSnapshot snapshot) {
+    if (snapshot.beCount == 0) {
+      return List.of();
+    }
+    List<BlockEntity> entities = new ArrayList<>(snapshot.beCount);
+    BlockPos.MutableBlockPos cursor = new BlockPos.MutableBlockPos();
+    var dispatcher = Minecraft.getInstance().getBlockEntityRenderDispatcher();
+    for (int i = 0; i < snapshot.beCount; i++) {
+      int cell = snapshot.bePositions[i];
+      cursor.set(
+          pos.minBlockX() + SectionGrid.cellX(cell),
+          pos.minBlockY() + SectionGrid.cellY(cell),
+          pos.minBlockZ() + SectionGrid.cellZ(cell));
+      BlockEntity entity = level.getBlockEntity(cursor);
+      if (entity != null && dispatcher.getRenderer(entity) != null) {
+        entities.add(entity);
+      }
+    }
+    return entities;
   }
 
   private static int layerIndex(BlockState state) {

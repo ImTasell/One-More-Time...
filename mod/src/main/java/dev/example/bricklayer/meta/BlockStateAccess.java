@@ -7,24 +7,23 @@ package dev.example.bricklayer.meta;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.world.level.BlockGetter;
+import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.state.BlockState;
 
 /**
  * The vanilla predicates Bricklayer calls, in one place.
  *
- * <p>Keeping them together makes the "verify these against the decompiled sources" list from the
- * specification short: every signature that may shift between 1.21.x versions appears once.
- *
- * <p>Assumption: {@code BlockState#shouldRenderFace(BlockGetter, BlockPos, Direction, BlockPos)}
- * exists in 1.21.1 with the neighbour position as the fourth argument. If it moved to {@code
- * Block#shouldRenderFace}, only this class changes.
+ * <p>Keeping them together makes the "verify against the decompiled sources" list short: every
+ * signature that can shift between 1.21.x versions appears once, and it is checked against 1.21.1's
+ * sources.
  */
 public final class BlockStateAccess {
   private BlockStateAccess() {}
 
+  /** Vanilla's six-face culling decision, including same-block and modded face-hiding overrides. */
   public static boolean shouldRenderFace(
       BlockState state, BlockGetter level, BlockPos pos, Direction face, BlockPos neighbourPos) {
-    return state.shouldRenderFace(level, pos, face, neighbourPos);
+    return Block.shouldRenderFace(state, level, pos, face, neighbourPos);
   }
 
   /** Full cube that hides every neighbouring face. */
@@ -48,8 +47,6 @@ public final class BlockStateAccess {
 
   /** Vanilla's per-state AO darkness factor. */
   public static float shadeBrightness(BlockState state, BlockGetter level, BlockPos pos) {
-    // Assumption: BlockState#getShadeBrightness exists in 1.21.1. It is 1.0 for almost every block,
-    // and 1.0 is the value vanilla's AO code falls back to.
-    return 1.0f;
+    return state.getShadeBrightness(level, pos);
   }
 }

@@ -9,6 +9,7 @@ import net.minecraft.client.resources.model.BakedModel;
 import net.minecraft.client.resources.model.MultiPartBakedModel;
 import net.minecraft.client.resources.model.SimpleBakedModel;
 import net.minecraft.client.resources.model.WeightedBakedModel;
+import net.minecraft.util.random.WeightedEntry;
 
 /**
  * Static-model check.
@@ -33,11 +34,11 @@ public final class ModelClassifier {
       return true;
     }
     if (model instanceof WeightedBakedModel weighted) {
-      List<WeightedBakedModel.WeightedModel> entries = WeightedModelAccess.entries(weighted);
+      List<WeightedEntry.Wrapper<BakedModel>> entries = WeightedModelAccess.entries(weighted);
       if (entries.isEmpty()) {
         return false;
       }
-      for (WeightedBakedModel.WeightedModel entry : entries) {
+      for (WeightedEntry.Wrapper<BakedModel> entry : entries) {
         if (!isStatic(WeightedModelAccess.model(entry))) {
           return false;
         }

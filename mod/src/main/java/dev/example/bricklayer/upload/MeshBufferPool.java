@@ -10,9 +10,10 @@ import java.util.ArrayDeque;
 /**
  * Hands out per-layer {@link ByteBufferBuilder}s in size classes from 64 KiB to 4 MiB.
  *
- * <p>Each layer tracks its high-water mark so a section that needs more room grows once instead of
- * every time. Unused buffers are trimmed after 30 seconds of idleness, which keeps a big
- * exploration session from holding a few dozen megabytes of scratch memory forever.
+ * <p>Each layer tracks the largest buffer it has needed so a section that outgrows its buffer gets
+ * a right-sized replacement instead of growing on every call. Buffers that have been idle for 30
+ * seconds are released, which keeps a long exploration session from holding tens of megabytes of
+ * scratch memory.
  */
 public final class MeshBufferPool {
   private static final int MIN_SIZE = 64 * 1024;
@@ -90,18 +91,22 @@ public final class MeshBufferPool {
     synchronized ByteBufferBuilder acquire() {
       lastUseNanos = System.nanoTime();
       ByteBufferBuilder buffer = free.poll();
-      return buffer != null
-          ? buffer
-          : new ByteBufferBuilder(sizeClass(highWater == 0 ? MIN_SIZE : highWater));
+      return buffer != null ? buffer : new ByteBufferBuilder(Math.max(MIN_SIZE, highWater));
     }
 
     synchronized void release(ByteBufferBuilder buffer) {
       lastUseNanos = System.nanoTime();
-      int capacity = buffer.capacity();
-      if (capacity > highWater) {
-        highWater = capacity;
+      if (buffer == null) {
+        return;
       }
       free.add(buffer);
+    }
+
+    /** Records how large a buffer the mesher needed, so the next one is right-sized. */
+    synchronized void recordSize(int bytes) {
+      if (bytes > highWater) {
+        highWater = Math.min(MAX_SIZE, sizeClass(bytes));
+      }
     }
 
     synchronized int pooled() {
@@ -111,7 +116,7 @@ public final class MeshBufferPool {
     synchronized void trimIdle() {
       if (!free.isEmpty() && System.nanoTime() - lastUseNanos > IDLE_TRIM_NANOS) {
         free.clear();
-        // Keep the high-water mark: re-growing on the next burst is cheaper than a full rebuild.
+        // Keep the high-water mark: re-growing on the next burst is cheaper than a rebuild.
       }
     }
 

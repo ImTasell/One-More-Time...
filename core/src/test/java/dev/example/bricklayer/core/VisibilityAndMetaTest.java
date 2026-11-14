@@ -172,10 +172,10 @@ class VisibilityAndMetaTest {
     SectionSnapshot first = TestSections.snapshot(0);
     SectionSnapshot second = TestSections.snapshot(0);
     SectionSnapshot third = TestSections.snapshot(0);
-    assertTrue(queue.offer(new TaskQueue.Task(1L, 1, first, 10.0)));
-    assertTrue(queue.offer(new TaskQueue.Task(2L, 1, second, 20.0)));
+    assertTrue(queue.offer(new TaskQueue.Task(1L, 1, first, 10.0, null)));
+    assertTrue(queue.offer(new TaskQueue.Task(2L, 1, second, 20.0, null)));
     // A nearer task evicts the farthest one.
-    assertTrue(queue.offer(new TaskQueue.Task(3L, 1, third, 5.0)));
+    assertTrue(queue.offer(new TaskQueue.Task(3L, 1, third, 5.0, null)));
     assertEquals(2, queue.size());
     assertEquals(1L, queue.evictedCount());
     assertEquals(3L, queue.poll().sectionKey);

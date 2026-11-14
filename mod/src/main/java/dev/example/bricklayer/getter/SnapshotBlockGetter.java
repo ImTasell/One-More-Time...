@@ -8,13 +8,13 @@ import dev.example.bricklayer.core.grid.SectionGrid;
 import dev.example.bricklayer.core.grid.SectionSnapshot;
 import dev.example.bricklayer.meta.VanillaStates;
 import javax.annotation.Nullable;
-import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.SectionPos;
 import net.minecraft.world.level.BlockAndTintGetter;
 import net.minecraft.world.level.ColorResolver;
+import net.minecraft.world.level.LightLayer;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
@@ -44,9 +44,9 @@ public final class SnapshotBlockGetter implements BlockAndTintGetter {
 
   @Override
   public BlockState getBlockState(BlockPos pos) {
-    int x = pos.getX() - (origin.minBlockX());
-    int y = pos.getY() - (origin.minBlockY());
-    int z = pos.getZ() - (origin.minBlockZ());
+    int x = pos.getX() - origin.minBlockX();
+    int y = pos.getY() - origin.minBlockY();
+    int z = pos.getZ() - origin.minBlockZ();
     if (x < -1 || x > 16 || y < -1 || y > 16 || z < -1 || z > 16) {
       // Deferred renderers occasionally peek one block further; the world is the authority there.
       return level.getBlockState(pos);
@@ -79,7 +79,7 @@ public final class SnapshotBlockGetter implements BlockAndTintGetter {
   }
 
   @Override
-  public int getBrightness(net.minecraft.world.level.LightLayer layer, BlockPos pos) {
+  public int getBrightness(LightLayer layer, BlockPos pos) {
     int x = pos.getX() - origin.minBlockX();
     int y = pos.getY() - origin.minBlockY();
     int z = pos.getZ() - origin.minBlockZ();
@@ -87,13 +87,13 @@ public final class SnapshotBlockGetter implements BlockAndTintGetter {
       return level.getBrightness(layer, pos);
     }
     int packed = snapshot.light[SectionGrid.idx(x, y, z)] & 0xFF;
-    return layer == net.minecraft.world.level.LightLayer.SKY ? (packed >> 4) & 15 : packed & 15;
+    return layer == LightLayer.SKY ? (packed >> 4) & 15 : packed & 15;
   }
 
   @Override
   public int getRawBrightness(BlockPos pos, int amount) {
-    int sky = getBrightness(net.minecraft.world.level.LightLayer.SKY, pos) - amount;
-    return sky << 20 | getBrightness(net.minecraft.world.level.LightLayer.BLOCK, pos) << 4;
+    int sky = Math.max(0, getBrightness(LightLayer.SKY, pos) - amount);
+    return sky << 20 | getBrightness(LightLayer.BLOCK, pos) << 4;
   }
 
   @Override
@@ -122,24 +122,14 @@ public final class SnapshotBlockGetter implements BlockAndTintGetter {
     return level.getMinBuildHeight();
   }
 
-  @Override
-  public int getLightEmission(BlockPos pos) {
-    return getBlockState(pos).getLightEmission();
-  }
-
-  /** Section-local cursor helper for deferred renderers that pre-allocate a position. */
+  /** Section-local cursor helper for deferred renderers that need a reusable position. */
   public BlockPos.MutableBlockPos cursor(int localX, int localY, int localZ) {
     return cursor.set(
         origin.minBlockX() + localX, origin.minBlockY() + localY, origin.minBlockZ() + localZ);
   }
 
-  /** Client level this snapshot came from, for {@code BlockColors} calls that need one. */
+  /** Client level this snapshot came from, for callers that need one. */
   public ClientLevel level() {
     return level;
-  }
-
-  /** Convenience for diagnostics. */
-  public static ClientLevel currentLevelOrNull() {
-    return Minecraft.getInstance().level;
   }
 }
