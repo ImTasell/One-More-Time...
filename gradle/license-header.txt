@@ -1,0 +1,4 @@
+/*
+ * Bricklayer - a replacement chunk-section mesher for Minecraft 1.21.1 (NeoForge).
+ * Copyright (c) 2026 the Bricklayer contributors. See LICENSE for licence terms.
+ */

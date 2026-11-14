@@ -1,0 +1,20 @@
+{
+  "bricklayer.configuration.enabled": "Enable Bricklayer",
+  "bricklayer.configuration.workerThreads": "Mesher worker threads (0 = auto)",
+  "bricklayer.configuration.uploadBudgetMs": "Upload budget per frame (ms)",
+  "bricklayer.configuration.maxInFlight": "Maximum in-flight mesh tasks",
+  "bricklayer.configuration.aoMode": "Ambient occlusion mode",
+  "bricklayer.configuration.rawSink": "Write vertices into the raw buffer",
+  "bricklayer.configuration.debugOverlay": "Show the F3 debug lines",
+  "bricklayer.configuration.breakerThreshold": "Failures per minute before disabling",
+  "bricklayer.configuration.verbose": "Verbose logging",
+  "bricklayer.gate.active": "Bricklayer is active.",
+  "bricklayer.gate.disabled_conflict": "Bricklayer is disabled: another renderer owns section meshing.",
+  "bricklayer.gate.disabled_breaker": "Bricklayer tripped its failure circuit breaker and is disabled for this session.",
+  "bricklayer.gate.disabled_user": "Bricklayer is disabled in the config.",
+  "bricklayer.command.stats.header": "Bricklayer statistics",
+  "bricklayer.command.toggle": "Bricklayer enabled: %s",
+  "bricklayer.command.parity.ok": "Parity OK: %s quads, %s vertices match vanilla.",
+  "bricklayer.command.parity.mismatch": "Parity mismatch on layer %s: %s vs %s vertices.",
+  "bricklayer.command.dump.saved": "Snapshot for %s written to %s"
+}

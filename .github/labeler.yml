@@ -1,0 +1,9 @@
+core:
+  - changed-files:
+      - any-glob-to-any-file: 'core/**'
+mod:
+  - changed-files:
+      - any-glob-to-any-file: 'mod/**'
+ci:
+  - changed-files:
+      - any-glob-to-any-file: '.github/**'

@@ -1,0 +1,17 @@
+{
+  "required": true,
+  "minVersion": "0.8.5",
+  "package": "dev.example.bricklayer.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "plugin": "dev.example.bricklayer.mixin.BricklayerMixinPlugin",
+  "injectors": {
+    "defaultRequire": 1
+  },
+  "client": [
+    "LevelChunkMixin",
+    "LevelRendererMixin",
+    "SectionRenderDispatcherMixin",
+    "RenderSectionMixin",
+    "RebuildTaskMixin"
+  ]
+}

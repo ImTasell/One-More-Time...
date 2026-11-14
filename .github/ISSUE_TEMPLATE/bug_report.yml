@@ -1,0 +1,69 @@
+name: Bug report
+description: Report a rendering bug with Bricklayer installed.
+labels: ['bug']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Bricklayer is a joke mod that replaces chunk meshing. Rendering bugs are expected;
+        a complete report is the only way they get fixed.
+  - type: input
+    id: mc
+    attributes:
+      label: Minecraft version
+      placeholder: 1.21.1
+    validations:
+      required: true
+  - type: input
+    id: neoforge
+    attributes:
+      label: NeoForge version
+      placeholder: 21.1.264
+    validations:
+      required: true
+  - type: input
+    id: bricklayer
+    attributes:
+      label: Bricklayer version
+      placeholder: 0.1.0
+    validations:
+      required: true
+  - type: textarea
+    id: modlist
+    attributes:
+      label: Full mod list
+      description: Paste the complete mod list, not just the mods you think are relevant.
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: latest.log
+      description: Drag the log file into this field.
+    validations:
+      required: true
+  - type: textarea
+    id: dump
+    attributes:
+      label: Output of /bricklayer dump
+    validations:
+      required: false
+  - type: textarea
+    id: parity
+    attributes:
+      label: Output of /bricklayer parity
+    validations:
+      required: false
+  - type: input
+    id: spark
+    attributes:
+      label: spark profile link
+    validations:
+      required: false
+  - type: checkboxes
+    id: baseline
+    attributes:
+      label: Baseline
+      options:
+        - label: Reproduced with Bricklayer disabled (`enabled=false`) and it does not happen
+          required: true

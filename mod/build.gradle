@@ -1,0 +1,47 @@
+plugins {
+    id 'java-library'
+    id 'net.neoforged.moddev' version '2.0.78' // bump to the latest 2.0.x
+}
+
+def tagVersion = System.getenv('GITHUB_REF_TYPE') == 'tag' ?
+        System.getenv('GITHUB_REF_NAME').replaceFirst('^v', '') : null
+version = tagVersion ?: "${mod_version}-dev"
+
+java.toolchain.languageVersion = JavaLanguageVersion.of(21)
+
+dependencies {
+    implementation project(':core')
+}
+
+neoForge {
+    version = neo_version
+    parchment {
+        minecraftVersion = parchment_minecraft
+        mappingsVersion = parchment_mappings
+    }
+    accessTransformers.from('src/main/resources/META-INF/accesstransformer.cfg')
+    runs {
+        client {
+            client()
+            gameDirectory = file('run')
+            systemProperty 'mixin.debug.export', 'true'
+        }
+    }
+    mods {
+        "${mod_id}" {
+            sourceSet sourceSets.main
+            sourceSet project(':core').sourceSets.main
+        }
+    }
+}
+
+processResources {
+    inputs.property 'version', version
+    filesMatching('META-INF/neoforge.mods.toml') {
+        expand(mod_id: mod_id, mod_version: version, mc_version: minecraft_version, neo_version: neo_version)
+    }
+}
+
+jar {
+    from project(':core').sourceSets.main.output
+}
